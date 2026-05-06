@@ -14,7 +14,8 @@ export async function GET(req: NextRequest) {
     videoId =
       u.searchParams.get("v") ||
       (u.hostname === "youtu.be" ? u.pathname.slice(1) : null) ||
-      (u.pathname.startsWith("/shorts/") ? u.pathname.split("/")[2] : null);
+      (u.pathname.startsWith("/shorts/") ? u.pathname.split("/")[2] : null) ||
+      (u.pathname.startsWith("/embed/") ? u.pathname.split("/")[2] : null);
   } catch {
     return NextResponse.json({ error: "Invalid URL" }, { status: 400 });
   }
@@ -22,46 +23,61 @@ export async function GET(req: NextRequest) {
   if (!videoId) return NextResponse.json({ error: "Could not extract video ID" }, { status: 400 });
 
   try {
-    const yt = await Innertube.create({ retrieve_player: false });
-    const info = await yt.getBasicInfo(videoId);
+    const yt = await Innertube.create({ retrieve_player: true });
+    const info = await yt.getInfo(videoId);
     const details = info.basic_info;
 
-    const formats: { itag: number; quality: string; mimeType: string; hasAudio: boolean; hasVideo: boolean; contentLength?: string }[] = [];
+    const formats: {
+      itag: number;
+      quality: string;
+      mimeType: string;
+      hasAudio: boolean;
+      hasVideo: boolean;
+      contentLength?: string;
+      bitrate?: number;
+    }[] = [];
 
-    if (info.streaming_data?.formats) {
-      for (const f of info.streaming_data.formats) {
-        formats.push({
-          itag: f.itag,
-          quality: f.quality_label ?? "unknown",
-          mimeType: f.mime_type ?? "",
-          hasAudio: true,
-          hasVideo: true,
-          contentLength: f.content_length?.toString(),
-        });
-      }
+    const seen = new Set<number>();
+
+    const addFormat = (f: {
+      itag: number;
+      quality_label?: string;
+      mime_type?: string;
+      has_audio?: boolean;
+      has_video?: boolean;
+      content_length?: bigint | number;
+      average_bitrate?: number;
+      url?: string;
+    }, hasAudio: boolean, hasVideo: boolean) => {
+      if (seen.has(f.itag) || !f.url) return;
+      seen.add(f.itag);
+      formats.push({
+        itag: f.itag,
+        quality: f.quality_label ?? (hasAudio && !hasVideo ? "audio" : "unknown"),
+        mimeType: f.mime_type ?? "",
+        hasAudio,
+        hasVideo,
+        contentLength: f.content_length?.toString(),
+        bitrate: f.average_bitrate,
+      });
+    };
+
+    for (const f of info.streaming_data?.formats ?? []) {
+      addFormat(f, true, true);
+    }
+    for (const f of info.streaming_data?.adaptive_formats ?? []) {
+      const mime = f.mime_type ?? "";
+      addFormat(f, mime.startsWith("audio/"), mime.startsWith("video/"));
     }
 
-    if (info.streaming_data?.adaptive_formats) {
-      for (const f of info.streaming_data.adaptive_formats) {
-        const hasVideo = (f.mime_type ?? "").startsWith("video/");
-        const hasAudio = (f.mime_type ?? "").startsWith("audio/");
-        formats.push({
-          itag: f.itag,
-          quality: f.quality_label ?? (hasAudio ? "audio" : "unknown"),
-          mimeType: f.mime_type ?? "",
-          hasAudio,
-          hasVideo,
-          contentLength: f.content_length?.toString(),
-        });
-      }
-    }
+    const thumb = details.thumbnail?.[0]?.url ?? `https://i.ytimg.com/vi/${videoId}/hqdefault.jpg`;
 
     return NextResponse.json({
       id: videoId,
-      title: details.title ?? "Unknown",
+      title: details.title ?? "Unknown Title",
       author: details.author ?? "Unknown",
       duration: details.duration ?? 0,
-      thumbnail: details.thumbnail?.[0]?.url ?? `https://i.ytimg.com/vi/${videoId}/hqdefault.jpg`,
+      thumbnail: thumb,
       formats,
     });
   } catch (e: unknown) {

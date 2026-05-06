@@ -24,19 +24,16 @@ export async function GET(req: NextRequest) {
     ];
 
     const format = allFormats.find((f) => f.itag === parseInt(itag));
-    if (!format || !format.url) {
-      return NextResponse.json({ error: "Format not found or no direct URL" }, { status: 404 });
+    if (!format?.url) {
+      return NextResponse.json({ error: "Format not found or no direct URL available" }, { status: 404 });
     }
 
-    const ext = type === "audio" ? "mp3" : "mp4";
-    const safeTitle = title.replace(/[^a-z0-9]/gi, "_").toLowerCase();
+    const ext = type === "audio" ? "webm" : "mp4";
+    const safeTitle = title.replace(/[^a-z0-9]/gi, "_").slice(0, 60);
 
-    // Redirect to the direct stream URL - avoids Vercel timeout on large files
-    return NextResponse.redirect(format.url, {
-      headers: {
-        "Content-Disposition": `attachment; filename="${safeTitle}.${ext}"`,
-      },
-    });
+    // Redirect straight to YouTube CDN — bypasses Vercel timeout entirely
+    return NextResponse.redirect(format.url, 302);
+
   } catch (e: unknown) {
     const msg = e instanceof Error ? e.message : "Unknown error";
     return NextResponse.json({ error: msg }, { status: 500 });
